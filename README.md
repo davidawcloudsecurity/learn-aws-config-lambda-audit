@@ -1,4 +1,5 @@
-![image](https://github.com/user-attachments/assets/299320f0-5e03-4773-a5f1-e0888d4697c2)# learn-aws-config-lambda-rule
+![image](https://github.com/user-attachments/assets/299320f0-5e03-4773-a5f1-e0888d4697c2)
+# learn-aws-config-lambda-rule
 How to create lambda rule with aws config
 
 Yes, I understand this code! It's a more sophisticated version of the S3 public access check that also evaluates bucket policies and ACLs. Let's create a **generalized template** that can be adapted for other AWS resource checks with AWS Config + Lambda.
