@@ -112,7 +112,10 @@ def evaluate_resource(client, resource, rule_params):
         return {'ComplianceType': 'NOT_APPLICABLE', 'Annotation': 'Resource no longer exists'}
     except Exception as e:
         logger.error("Evaluation error: %s", str(e))
-        return {'ComplianceType': 'ERROR', 'Annotation': f"Evaluation failed: {str(e)}"}
+        return {  # CHANGED FROM 'ERROR' TO 'NON_COMPLIANT'
+            'ComplianceType': 'NON_COMPLIANT',  # or 'NOT_APPLICABLE' if appropriate
+            'Annotation': f"Error checking encryption: {str(e)}"
+        }
 ```
 
 ---
