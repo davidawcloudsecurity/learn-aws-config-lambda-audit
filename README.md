@@ -2,7 +2,28 @@
 # learn-aws-config-lambda-rule
 How to create lambda rule with aws config
 
-Yes, I understand this code! It's a more sophisticated version of the S3 public access check that also evaluates bucket policies and ACLs. Let's create a **generalized template** that can be adapted for other AWS resource checks with AWS Config + Lambda.
+If you are using lambda to audit aws resources. You might need to learn about this.
+
+1. Cloudtrail uses Username, to track action taken on aws resources. The name of the lambda function would be the Username. You must use the following to track what actions are denied so that you can add the specific iam actions/policy
+```
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=Username,AttributeValue=process-AWS-Config-events
+```
+Sample results - aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=CreateTopic 
+```
+{
+    "Events": [
+        {
+            "EventId": "81bc8e0e-2582-4877-81f2-d9f91b0cbe4a",
+            "EventName": "CreateTopic",
+            "ReadOnly": "false",
+            "AccessKeyId": "ASIA...",
+            "EventTime": "2025-03-30T02:48:01+00:00",
+            "EventSource": "sns.amazonaws.com",
+            "Username": "example",
+            "Resources": [
+```
+2. Lambda function uses execution role. This will determine if your function can perform specific tasks in your codes.
+3. AWS Config can create a service role by default. It doesn't need a lambda policy to invoke lambda because you can allow the lambda to be trigger by aws config through resource base policy. Like s3, ensure the principle has included config.amazonaws.com
 
 ---
 
