@@ -211,7 +211,7 @@ def evaluate_bucket(s3_client, bucket_name):
         }
     except Exception as e:
         logger.error("Error evaluating bucket %s: %s", bucket_name, str(e))
-        return {  # CHANGED FROM 'ERROR' TO 'NON_COMPLIANT'
-            'ComplianceType': 'NON_COMPLIANT',  # or 'NOT_APPLICABLE' if appropriate
-            'Annotation': f"Error checking encryption: {str(e)}"
+        return {
+            'ComplianceType': 'NON_COMPLIANT',
+            'Annotation': f"Error evaluating compliance: {str(e)}"
         }
