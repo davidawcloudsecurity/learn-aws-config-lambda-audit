@@ -156,6 +156,22 @@ def evaluate_bucket(s3_client, bucket_name):
                 'ComplianceType': 'NON_COMPLIANT',
                 'Annotation': f"Bucket {bucket_name} does not have public access block configuration."
             }
+        except Exception as e:
+            # Handle case when NoSuchPublicAccessBlockConfiguration isn't a proper exception
+            if 'NoSuchPublicAccessBlockConfiguration' in str(e):
+                if DEBUG_MODE:
+                    logger.info("No Public Access Block Configuration found for bucket: %s", bucket_name)
+                return {
+                    'ComplianceType': 'NON_COMPLIANT',
+                    'Annotation': f"Bucket {bucket_name} does not have public access block configuration."
+                }
+            else:
+                # For other exceptions, log and return INSUFFICIENT_DATA
+                logger.error("Error checking public access block for %s: %s", bucket_name, str(e)[:200])
+                return {
+                    'ComplianceType': 'INSUFFICIENT_DATA',
+                    'Annotation': f"Could not evaluate bucket {bucket_name} public access block configuration."
+                }
         
         # Check bucket policy
         try:
@@ -211,7 +227,8 @@ def evaluate_bucket(s3_client, bucket_name):
         }
     except Exception as e:
         logger.error("Error evaluating bucket %s: %s", bucket_name, str(e))
+        # Change ERROR to INSUFFICIENT_DATA and limit annotation length
         return {
-            'ComplianceType': 'ERROR',
-            'Annotation': f"Error evaluating compliance: {str(e)}"
+            'ComplianceType': 'INSUFFICIENT_DATA',
+            'Annotation': f"Error evaluating compliance: {str(e)[:200]}"
         }
