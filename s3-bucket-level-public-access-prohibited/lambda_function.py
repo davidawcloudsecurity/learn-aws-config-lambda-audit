@@ -132,7 +132,6 @@ def evaluate_bucket(s3_client, bucket_name):
     # Check if the bucket exists without using HeadBucket
     try:
         # Try to perform a less-privileged operation to check if bucket exists
-        # ListObjectsV2 with max-keys=0 is a lightweight check
         s3_client.list_objects_v2(Bucket=bucket_name, MaxKeys=1)
     except s3_client.exceptions.ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')
@@ -145,7 +144,6 @@ def evaluate_bucket(s3_client, bucket_name):
             }
         
         # For access issues, try to continue with the evaluation
-        # Some operations might still work even if list_objects doesn't
         logger.warning("Warning checking bucket %s existence: %s", bucket_name, str(e)[:200])
         # We'll continue and let individual operations handle their own errors
     
@@ -254,10 +252,10 @@ def evaluate_bucket(s3_client, bucket_name):
                 logger.error("Error checking ACLs for %s: %s", bucket_name, str(e)[:200])
                 # Continue with other checks
         
-        # If we weren't able to check any security settings, return INSUFFICIENT_DATA
+        # If we weren't able to check any security settings, return NOT_APPLICABLE instead of INSUFFICIENT_DATA
         if not has_acl_info and not has_bucket_policy:
             return {
-                'ComplianceType': 'INSUFFICIENT_DATA',
+                'ComplianceType': 'NOT_APPLICABLE',
                 'Annotation': f"Unable to evaluate bucket {bucket_name} security settings."
             }
         
@@ -269,146 +267,9 @@ def evaluate_bucket(s3_client, bucket_name):
     
     except Exception as e:
         logger.error("Error evaluating bucket %s: %s", bucket_name, str(e)[:200])
-        # Use INSUFFICIENT_DATA and limit annotation length
+        # Use NOT_APPLICABLE instead of INSUFFICIENT_DATA
         return {
-            'ComplianceType': 'INSUFFICIENT_DATA',
-            'Annotation': f"Could not complete evaluation: {str(e)[:200]}"
-        }
-    """
-    Evaluate an S3 bucket for public access configuration.
-    
-    Parameters:
-    s3_client: AWS S3 client
-    bucket_name (str): Name of the bucket to evaluate
-    
-    Returns:
-    dict: Evaluation result
-    """
-    if DEBUG_MODE:
-        logger.info("Evaluating bucket: %s", bucket_name)
-    
-    # First check if the bucket exists
-    try:
-        s3_client.head_bucket(Bucket=bucket_name)
-    except s3_client.exceptions.ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', '')
-        
-        # 404 means bucket doesn't exist, 403 can mean it exists but you don't have permission
-        if error_code == '404':
-            return {
-                'ComplianceType': 'NOT_APPLICABLE',
-                'Annotation': f"The bucket {bucket_name} no longer exists."
-            }
-        
-        logger.error("Error checking if bucket %s exists: %s", bucket_name, str(e)[:200])
-        return {
-            'ComplianceType': 'INSUFFICIENT_DATA',
-            'Annotation': f"Could not evaluate bucket {bucket_name}: Access issue."
-        }
-    
-    try:
-        # Check the bucket's public access block settings
-        try:
-            public_access_block = s3_client.get_public_access_block(Bucket=bucket_name)
-            block_config = public_access_block['PublicAccessBlockConfiguration']
-            
-            if DEBUG_MODE:
-                logger.info("Public Access Block Configuration for %s: %s", bucket_name, json.dumps(block_config))
-            
-            # Check if any of the public access block settings are disabled
-            if (not block_config['BlockPublicAcls'] or
-                not block_config['IgnorePublicAcls'] or
-                not block_config['BlockPublicPolicy'] or
-                not block_config['RestrictPublicBuckets']):
-                return {
-                    'ComplianceType': 'NON_COMPLIANT',
-                    'Annotation': f"Bucket {bucket_name} has one or more public access block settings disabled."
-                }
-        except Exception as e:
-            # Handle the case when no public access block configuration exists
-            error_msg = str(e)
-            if 'NoSuchPublicAccessBlockConfiguration' in error_msg:
-                if DEBUG_MODE:
-                    logger.info("No Public Access Block Configuration found for bucket: %s", bucket_name)
-                return {
-                    'ComplianceType': 'NON_COMPLIANT',
-                    'Annotation': f"Bucket {bucket_name} does not have public access block configuration."
-                }
-            else:
-                # For other exceptions, log and return INSUFFICIENT_DATA
-                logger.error("Error checking public access block for %s: %s", bucket_name, str(e)[:200])
-                return {
-                    'ComplianceType': 'INSUFFICIENT_DATA',
-                    'Annotation': f"Could not evaluate public access block configuration."
-                }
-        
-        # Check bucket policy
-        try:
-            bucket_policy = s3_client.get_bucket_policy(Bucket=bucket_name)
-            policy = json.loads(bucket_policy['Policy'])
-            
-            if DEBUG_MODE:
-                logger.info("Bucket policy for %s: %s", bucket_name, json.dumps(policy))
-            
-            # Basic check for potentially public policy
-            for statement in policy.get('Statement', []):
-                principal = statement.get('Principal', {})
-                effect = statement.get('Effect', '')
-                
-                # Check if effect is "Allow" and principal has public access
-                if effect.upper() == 'ALLOW':
-                    if principal == '*' or principal.get('AWS') == '*' or (
-                        isinstance(principal.get('AWS'), list) and '*' in principal.get('AWS')):
-                        return {
-                            'ComplianceType': 'NON_COMPLIANT',
-                            'Annotation': f"Bucket {bucket_name} has a policy with a wildcard principal."
-                        }
-        except Exception as e:
-            error_msg = str(e)
-            if 'NoSuchBucketPolicy' in error_msg:
-                # No bucket policy is fine
-                if DEBUG_MODE:
-                    logger.info("No bucket policy found for: %s", bucket_name)
-            else:
-                logger.error("Error checking bucket policy for %s: %s", bucket_name, str(e)[:200])
-                return {
-                    'ComplianceType': 'INSUFFICIENT_DATA',
-                    'Annotation': f"Could not evaluate bucket policy."
-                }
-        
-        # Check ACLs
-        try:
-            acl = s3_client.get_bucket_acl(Bucket=bucket_name)
-            if DEBUG_MODE:
-                logger.info("ACL for bucket %s: %s", bucket_name, json.dumps(acl, default=str))
-            
-            # Check for public access in ACLs
-            for grant in acl.get('Grants', []):
-                grantee = grant.get('Grantee', {})
-                if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' or \
-                   grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers':
-                    return {
-                        'ComplianceType': 'NON_COMPLIANT',
-                        'Annotation': f"Bucket {bucket_name} has public access granted through ACLs."
-                    }
-        except Exception as e:
-            logger.error("Error checking ACLs for %s: %s", bucket_name, str(e)[:200])
-            return {
-                'ComplianceType': 'INSUFFICIENT_DATA',
-                'Annotation': f"Could not evaluate bucket ACL configuration."
-            }
-        
-        # If we've passed all checks, the bucket is compliant
-        return {
-            'ComplianceType': 'COMPLIANT',
-            'Annotation': f"Bucket {bucket_name} does not have public access enabled."
-        }
-    
-    except Exception as e:
-        logger.error("Error evaluating bucket %s: %s", bucket_name, str(e)[:200])
-        # Use INSUFFICIENT_DATA and limit annotation length
-        return {
-            'ComplianceType': 'INSUFFICIENT_DATA',
+            'ComplianceType': 'NOT_APPLICABLE',
             'Annotation': f"Could not complete evaluation: {str(e)[:200]}"
         }
     """
@@ -451,6 +312,22 @@ def evaluate_bucket(s3_client, bucket_name):
                 'ComplianceType': 'NON_COMPLIANT',
                 'Annotation': f"Bucket {bucket_name} does not have public access block configuration."
             }
+        except Exception as e:
+            # Handle case when NoSuchPublicAccessBlockConfiguration isn't a proper exception
+            if 'NoSuchPublicAccessBlockConfiguration' in str(e):
+                if DEBUG_MODE:
+                    logger.info("No Public Access Block Configuration found for bucket: %s", bucket_name)
+                return {
+                    'ComplianceType': 'NON_COMPLIANT',
+                    'Annotation': f"Bucket {bucket_name} does not have public access block configuration."
+                }
+            else:
+                # For other exceptions, log and return INSUFFICIENT_DATA
+                logger.error("Error checking public access block for %s: %s", bucket_name, str(e)[:200])
+                return {
+                    'ComplianceType': 'INSUFFICIENT_DATA',
+                    'Annotation': f"Could not evaluate bucket {bucket_name} public access block configuration."
+                }
         
         # Check bucket policy
         try:
@@ -506,7 +383,8 @@ def evaluate_bucket(s3_client, bucket_name):
         }
     except Exception as e:
         logger.error("Error evaluating bucket %s: %s", bucket_name, str(e))
+        # Change ERROR to INSUFFICIENT_DATA and limit annotation length
         return {
-            'ComplianceType': 'ERROR',
-            'Annotation': f"Error evaluating compliance: {str(e)}"
+            'ComplianceType': 'INSUFFICIENT_DATA',
+            'Annotation': f"Error evaluating compliance: {str(e)[:200]}"
         }
