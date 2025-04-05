@@ -64,21 +64,6 @@ resource "aws_iam_policy_attachment" "lambda_s3_policy_attachment" {
   policy_arn = aws_iam_policy.lambda_s3_policy.arn
 }
 
-resource "aws_lambda_function" "lambda_function" {
-  filename         = "${path.module}/lambda_function.zip"
-  function_name    = "s3_bucket_level_public_access_prohibited"
-  role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "lambda_function.lambda_handler"
-  source_code_hash = filebase64sha256("${path.module}/lambda_function.zip")
-  runtime          = "python3.8"
-
-  environment {
-    variables = {
-      # Add your environment variables here
-    }
-  }
-}
-
 resource "aws_lambda_permission" "allow_cloudwatch" {
   statement_id  = "AllowExecutionFromCloudWatch"
   action        = "lambda:InvokeFunction"
@@ -93,4 +78,50 @@ resource "null_resource" "package_lambda" {
     EOT
     working_dir = "${path.module}"
   }
+}
+
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/lambda_function.py"
+  output_path = "${path.module}/lambda_function.zip"
+}
+
+resource "aws_lambda_function" "config_lambda" {
+  filename         = "${path.module}/lambda_function.zip"
+  function_name    = "s3_bucket_public_access_check"
+  role             = aws_iam_role.config_lambda_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = "python3.8"
+  timeout          = 30
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+}
+
+resource "aws_lambda_permission" "config_permission" {
+  statement_id  = "AllowExecutionFromConfig"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.config_lambda.function_name
+  principal     = "config.amazonaws.com"
+}
+
+resource "aws_config_config_rule" "s3_bucket_public_access_rule" {
+  name = "s3-bucket-level-public-access-prohibited"
+
+  source {
+    owner             = "CUSTOM_LAMBDA"
+    source_identifier = aws_lambda_function.config_lambda.arn
+
+    dynamic "source_detail" {
+      for_each = ["ConfigurationItemChangeNotification", "OversizedConfigurationItemChangeNotification"]
+      content {
+        event_source = "aws.config"
+        message_type = source_detail.value
+      }
+    }
+  }
+
+  scope {
+    compliance_resource_types = ["AWS::S3::Bucket"]
+  }
+
+  depends_on = [aws_lambda_permission.config_permission]
 }
