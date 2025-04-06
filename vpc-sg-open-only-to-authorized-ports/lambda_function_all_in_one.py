@@ -106,12 +106,12 @@ def lambda_handler(event, context):
 
 def evaluate_security_group(ec2_client, group_id):
     """
-    Evaluate a security group for rules allowing traffic from/to 0.0.0.0/0.
-    
+    Evaluate a security group for rules allowing traffic from/to 0.0.0.0/0 and list Rule IDs.
+
     Parameters:
     - ec2_client: AWS EC2 client
     - group_id (str): ID of the security group
-    
+
     Returns:
     - dict or None: Evaluation result if the security group exists, None if it doesn’t
     """
@@ -119,28 +119,32 @@ def evaluate_security_group(ec2_client, group_id):
         logger.info("Evaluating security group: %s", group_id)
     
     try:
-        response = ec2_client.describe_security_groups(GroupIds=[group_id])
-        sg = response['SecurityGroups'][0]
+        # Fetch all rules for the security group
+        response = ec2_client.describe_security_group_rules(
+            Filters=[{'Name': 'group-id', 'Values': [group_id]}]
+        )
+        rules = response['SecurityGroupRules']
         
-        # Check inbound rules
-        for permission in sg['IpPermissions']:
-            for ip_range in permission.get('IpRanges', []):
-                if ip_range['CidrIp'] == '0.0.0.0/0':
-                    return {
-                        'ComplianceType': 'NON_COMPLIANT',
-                        'Annotation': f"Security group {group_id} has an inbound rule allowing traffic from 0.0.0.0/0."
-                    }
+        # Check for rules with 0.0.0.0/0
+        non_compliant_rules = []
+        for rule in rules:
+            if rule.get('CidrIpv4') == '0.0.0.0/0':
+                rule_id = rule['SecurityGroupRuleId']
+                direction = 'inbound' if not rule['IsEgress'] else 'outbound'
+                non_compliant_rules.append((direction, rule_id))
         
-        # Check outbound rules
-        for permission in sg['IpPermissionsEgress']:
-            for ip_range in permission.get('IpRanges', []):
-                if ip_range['CidrIp'] == '0.0.0.0/0':
-                    return {
-                        'ComplianceType': 'NON_COMPLIANT',
-                        'Annotation': f"Security group {group_id} has an outbound rule allowing traffic to 0.0.0.0/0."
-                    }
+        # If non-compliant rules are found, include them in the annotation
+        if non_compliant_rules:
+            annotation = f"Security group {group_id} has non-compliant rules: "
+            for direction, rule_id in non_compliant_rules:
+                annotation += f"{direction} rule {rule_id}, "
+            annotation = annotation.rstrip(', ')  # Remove trailing comma and space
+            return {
+                'ComplianceType': 'NON_COMPLIANT',
+                'Annotation': annotation
+            }
         
-        # Compliant if no 0.0.0.0/0 rules found
+        # If no non-compliant rules are found, mark as compliant
         return {
             'ComplianceType': 'COMPLIANT',
             'Annotation': f"Security group {group_id} does not have rules allowing traffic from/to 0.0.0.0/0."
