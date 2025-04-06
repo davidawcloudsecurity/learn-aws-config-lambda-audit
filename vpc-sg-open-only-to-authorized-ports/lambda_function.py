@@ -106,12 +106,12 @@ def lambda_handler(event, context):
 
 def evaluate_security_group(ec2_client, group_id):
     """
-    Evaluate a security group for rules allowing traffic from/to 0.0.0.0/0 and list Rule IDs.
-
+    Evaluate a security group for rules allowing traffic from/to 0.0.0.0/0.
+    
     Parameters:
     - ec2_client: AWS EC2 client
     - group_id (str): ID of the security group
-
+    
     Returns:
     - dict or None: Evaluation result if the security group exists, None if it doesn’t
     """
@@ -119,13 +119,17 @@ def evaluate_security_group(ec2_client, group_id):
         logger.info("Evaluating security group: %s", group_id)
     
     try:
-        # Fetch all rules for the security group
-        response = ec2_client.describe_security_group_rules(
+        # First, confirm the security group exists
+        response = ec2_client.describe_security_groups(GroupIds=[group_id])
+        # If we reach here, the security group exists
+        
+        # Get the security group rules with their IDs
+        rules_response = ec2_client.describe_security_group_rules(
             Filters=[{'Name': 'group-id', 'Values': [group_id]}]
         )
-        rules = response['SecurityGroupRules']
+        rules = rules_response['SecurityGroupRules']
         
-        # Check for rules with 0.0.0.0/0
+        # Check for rules allowing traffic from/to 0.0.0.0/0
         non_compliant_rules = []
         for rule in rules:
             if rule.get('CidrIpv4') == '0.0.0.0/0':
@@ -133,33 +137,32 @@ def evaluate_security_group(ec2_client, group_id):
                 direction = 'inbound' if not rule['IsEgress'] else 'outbound'
                 non_compliant_rules.append((direction, rule_id))
         
-        # If non-compliant rules are found, include them in the annotation
         if non_compliant_rules:
             annotation = f"Security group {group_id} has non-compliant rules: "
             for direction, rule_id in non_compliant_rules:
                 annotation += f"{direction} rule {rule_id}, "
-            annotation = annotation.rstrip(', ')  # Remove trailing comma and space
+            annotation = annotation.rstrip(', ')
             return {
                 'ComplianceType': 'NON_COMPLIANT',
                 'Annotation': annotation
             }
-        
-        # If no non-compliant rules are found, mark as compliant
-        return {
-            'ComplianceType': 'COMPLIANT',
-            'Annotation': f"Security group {group_id} does not have rules allowing traffic from/to 0.0.0.0/0."
-        }
+        else:
+            return {
+                'ComplianceType': 'COMPLIANT',
+                'Annotation': f"Security group {group_id} does not have rules allowing traffic from/to 0.0.0.0/0."
+            }
     
     except ec2_client.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'InvalidGroup.NotFound':
             if DEBUG_MODE:
                 logger.info("Security group %s does not exist, skipping evaluation", group_id)
             return None  # Skip evaluation for non-existent security groups
-        logger.error("Error evaluating security group %s: %s", group_id, str(e))
-        return {
-            'ComplianceType': 'INSUFFICIENT_DATA',
-            'Annotation': f"Error: {str(e)[:200]}"
-        }
+        else:
+            logger.error("Error evaluating security group %s: %s", group_id, str(e))
+            return {
+                'ComplianceType': 'INSUFFICIENT_DATA',
+                'Annotation': f"Error: {str(e)[:200]}"
+            }
     except Exception as e:
         logger.error("Unexpected error evaluating security group %s: %s", group_id, str(e))
         return {
