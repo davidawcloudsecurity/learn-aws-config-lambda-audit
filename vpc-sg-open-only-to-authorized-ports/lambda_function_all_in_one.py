@@ -8,7 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Enable debug mode
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 def lambda_handler(event, context):
     """
@@ -22,6 +22,11 @@ def lambda_handler(event, context):
     Returns:
     - dict: Evaluation results are sent directly to AWS Config
     """
+    global DEBUG_MODE
+    rule_parameters = json.loads(event.get('ruleParameters', '{}'))
+    DEBUG_MODE = rule_parameters.get('debug_mode', False)
+    logger.info("Debug mode is %s", DEBUG_MODE)
+        
     if DEBUG_MODE:
         logger.info("Received event: %s", json.dumps(event))
     
@@ -32,6 +37,10 @@ def lambda_handler(event, context):
     # Parse event data
     invoking_event = json.loads(event['invokingEvent'])
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
+    remediate_str = rule_parameters.get('remediate', 'False')  # Get as string with default 'False'
+    remediate = remediate_str.lower() == 'true'
+    logger.info("Remediate is %s", remediate)
+    
     is_scheduled_notification = invoking_event.get('messageType') == 'ScheduledNotification'
     
     evaluations = []
