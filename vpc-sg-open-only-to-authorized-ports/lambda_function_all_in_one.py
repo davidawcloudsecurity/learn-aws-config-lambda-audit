@@ -7,170 +7,199 @@ from datetime import datetime
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Enable debug mode
+# Enable debug mode globally with default False
 DEBUG_MODE = False
 
 def lambda_handler(event, context):
     """
-    AWS Lambda function that checks security groups for rules allowing traffic from/to 0.0.0.0/0.
-    This function works with AWS Config to evaluate security group compliance.
-    
-    Parameters:
-    - event (dict): Event data from AWS Config
-    - context (object): Lambda execution context
-    
-    Returns:
-    - dict: Evaluation results are sent directly to AWS Config
+    AWS Lambda function to evaluate and optionally remediate security groups.
+    Works with AWS Config to report compliance.
+    Test with remediate=True in a safe environment to confirm rules are removed.
+    Test with remediate=False to verify evaluation without changes.
+    Test with debug_mode=False to share less
     """
     global DEBUG_MODE
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
     DEBUG_MODE = rule_parameters.get('debug_mode', False)
-    logger.info("Debug mode is %s", DEBUG_MODE)
-        
+    logger.info("Debug mode is %s", DEBUG_MODE)    
     if DEBUG_MODE:
-        logger.info("Received event: %s", json.dumps(event))
+        logger.info(f"Lambda invoked at {datetime.now().isoformat()}")
+        logger.info(f"Event: {json.dumps(event)}")
+        logger.info(f"Context: {context.function_name}, {context.aws_request_id}")
     
     # Initialize AWS clients
     config_client = boto3.client('config')
     ec2_client = boto3.client('ec2')
-    
+
     # Parse event data
     invoking_event = json.loads(event['invokingEvent'])
-    rule_parameters = json.loads(event.get('ruleParameters', '{}'))
-    remediate_str = rule_parameters.get('remediate', 'False')  # Get as string with default 'False'
+    remediate_str = rule_parameters.get('remediate', 'False')
     remediate = remediate_str.lower() == 'true'
-    logger.info("Remediate is %s", remediate)
-    
-    is_scheduled_notification = invoking_event.get('messageType') == 'ScheduledNotification'
-    
+    logger.info("Remediate is %s", remediate)    
+    is_scheduled = invoking_event.get('messageType') == 'ScheduledNotification'
+
+    if DEBUG_MODE:
+        logger.info(f"Remediation enabled: {remediate}")
+        logger.info(f"Is scheduled event: {is_scheduled}")
+
     evaluations = []
-    
-    # Handle scheduled notifications (evaluate all security groups)
-    if is_scheduled_notification:
+
+    if is_scheduled:
         if DEBUG_MODE:
-            logger.info("Processing scheduled notification")
-        
+            logger.info("Processing scheduled event - evaluating all security groups")
         try:
-            security_groups = []
             response = ec2_client.describe_security_groups()
-            security_groups.extend(response['SecurityGroups'])
-            while 'NextToken' in response:
-                response = ec2_client.describe_security_groups(NextToken=response['NextToken'])
-                security_groups.extend(response['SecurityGroups'])
+            if DEBUG_MODE:
+                logger.info(f"Found {len(response['SecurityGroups'])} security groups to evaluate")
             
-            for sg in security_groups:
+            for sg in response['SecurityGroups']:
                 group_id = sg['GroupId']
-                evaluation = evaluate_security_group(ec2_client, group_id)
-                
-                # Only add evaluation if it exists
-                if evaluation is not None:
+                if DEBUG_MODE:
+                    logger.info(f"Evaluating security group: {group_id} ({sg.get('GroupName', 'No name')})")
+                evaluation = evaluate_and_remediate(ec2_client, group_id, remediate)
+                if evaluation:
                     evaluation.update({
                         'ComplianceResourceType': 'AWS::EC2::SecurityGroup',
                         'ComplianceResourceId': group_id,
                         'OrderingTimestamp': invoking_event['notificationCreationTime']
                     })
                     evaluations.append(evaluation)
-                    if DEBUG_MODE:
-                        logger.info("Evaluated security group %s: %s", group_id, evaluation['ComplianceType'])
         except Exception as e:
-            logger.error("Error listing security groups: %s", str(e))
+            logger.error(f"Error listing security groups: {str(e)}")
             raise
     
-    # Handle configuration change (evaluate a specific security group)
     else:
-        configuration_item = invoking_event.get('configurationItem', invoking_event.get('configurationItemSummary', {}))
-        
+        config_item = invoking_event.get('configurationItem', {})
         if DEBUG_MODE:
-            logger.info("Processing configuration change: %s", json.dumps(configuration_item))
+            logger.info(f"Processing configuration change event for resource: {config_item.get('resourceType')}")
         
-        if configuration_item.get('resourceType') != 'AWS::EC2::SecurityGroup':
+        if config_item.get('resourceType') == 'AWS::EC2::SecurityGroup':
+            group_id = config_item['resourceId']
             if DEBUG_MODE:
-                logger.info("Not a security group, skipping evaluation")
-            config_client.put_evaluations(Evaluations=[], ResultToken=event['resultToken'])
-            return
-        
-        group_id = configuration_item['resourceId']
-        evaluation = evaluate_security_group(ec2_client, group_id)
-        
-        # Only add evaluation if it exists
-        if evaluation is not None:
-            evaluation.update({
-                'ComplianceResourceType': configuration_item['resourceType'],
-                'ComplianceResourceId': group_id,
-                'OrderingTimestamp': configuration_item['configurationItemCaptureTime']
-            })
-            evaluations.append(evaluation)
-    
-    # Send evaluations to AWS Config
+                logger.info(f"Evaluating specific security group: {group_id}")
+            
+            evaluation = evaluate_and_remediate(ec2_client, group_id, remediate)
+            if evaluation:
+                evaluation.update({
+                    'ComplianceResourceType': 'AWS::EC2::SecurityGroup',
+                    'ComplianceResourceId': group_id,
+                    'OrderingTimestamp': config_item['configurationItemCaptureTime']
+                })
+                evaluations.append(evaluation)
+        else:
+            if DEBUG_MODE:
+                logger.info(f"Resource type {config_item.get('resourceType')} is not a security group, skipping")
+
     if evaluations:
         if DEBUG_MODE:
-            logger.info("Sending %d evaluation(s) to AWS Config: %s", len(evaluations), json.dumps(evaluations, default=str))
-        
-        # Paginate evaluations (AWS Config limit is 100 per call)
-        for i in range(0, len(evaluations), 100):
-            chunk = evaluations[i:i + 100]
-            config_client.put_evaluations(Evaluations=chunk, ResultToken=event['resultToken'])
+            logger.info(f"Sending {len(evaluations)} evaluations to AWS Config")
+            logger.info(f"Evaluations: {json.dumps(evaluations)}")
+        config_client.put_evaluations(Evaluations=evaluations, ResultToken=event['resultToken'])
+
+    if DEBUG_MODE:
+        logger.info(f"Lambda execution complete. Results: {json.dumps(evaluations)}")
     
     return evaluations
 
-def evaluate_security_group(ec2_client, group_id):
+def evaluate_and_remediate(ec2_client, group_id, remediate):
     """
-    Evaluate a security group for rules allowing traffic from/to 0.0.0.0/0 and list Rule IDs.
-
-    Parameters:
-    - ec2_client: AWS EC2 client
-    - group_id (str): ID of the security group
-
-    Returns:
-    - dict or None: Evaluation result if the security group exists, None if it doesn’t
+    Evaluate a security group and optionally remediate non-compliant rules.
+    Returns None if the security group does not exist to skip evaluation.
     """
     if DEBUG_MODE:
-        logger.info("Evaluating security group: %s", group_id)
+        logger.info(f"Checking existence of security group: {group_id}")
     
+    # Explicitly check if the security group exists
     try:
-        # Fetch all rules for the security group
+        ec2_client.describe_security_groups(GroupIds=[group_id])
+    except ec2_client.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'InvalidGroup.NotFound':
+            if DEBUG_MODE:
+                logger.info(f"Security group {group_id} does not exist, skipping evaluation")
+            return None  # Skip non-existent security groups early
+        logger.error(f"Error checking security group {group_id}: {str(e)}")
+        return {
+            'ComplianceType': 'INSUFFICIENT_DATA',
+            'Annotation': f"Error checking existence: {str(e)[:200]}"
+        }
+
+    # If we reach here, the security group exists; proceed with rule evaluation
+    try:
+        if DEBUG_MODE:
+            logger.info(f"Evaluating rules for security group: {group_id}")
+            logger.info(f"Remediate: {remediate}")
+        
         response = ec2_client.describe_security_group_rules(
             Filters=[{'Name': 'group-id', 'Values': [group_id]}]
         )
         rules = response['SecurityGroupRules']
+
+        if DEBUG_MODE:
+            logger.info(f"Found {len(rules)} rules in security group {group_id}")
         
-        # Check for rules with 0.0.0.0/0
+        # Check for non-compliant rules (0.0.0.0/0)
         non_compliant_rules = []
         for rule in rules:
             if rule.get('CidrIpv4') == '0.0.0.0/0':
-                rule_id = rule['SecurityGroupRuleId']
                 direction = 'inbound' if not rule['IsEgress'] else 'outbound'
-                non_compliant_rules.append((direction, rule_id))
-        
-        # If non-compliant rules are found, include them in the annotation
+                non_compliant_rules.append((direction, rule['SecurityGroupRuleId']))
+                if DEBUG_MODE:
+                    protocol = rule.get('IpProtocol', 'all')
+                    from_port = rule.get('FromPort', 'all')
+                    to_port = rule.get('ToPort', 'all')
+                    logger.info(f"Found non-compliant {direction} rule {rule['SecurityGroupRuleId']}: "
+                               f"Protocol: {protocol}, Ports: {from_port}-{to_port}")
+
         if non_compliant_rules:
-            annotation = f"Security group {group_id} has non-compliant rules: "
-            for direction, rule_id in non_compliant_rules:
-                annotation += f"{direction} rule {rule_id}, "
-            annotation = annotation.rstrip(', ')  # Remove trailing comma and space
-            return {
-                'ComplianceType': 'NON_COMPLIANT',
-                'Annotation': annotation
-            }
+            annotation = f"Non-compliant rules found in {group_id}: {len(non_compliant_rules)} rules"
+            if DEBUG_MODE:
+                logger.info(f"Security group {group_id} is NON_COMPLIANT with {len(non_compliant_rules)} open rules")
+            
+            if remediate:
+                if DEBUG_MODE:
+                    logger.info(f"Remediating security group {group_id} by removing {len(non_compliant_rules)} rules")
+                
+                for direction, rule_id in non_compliant_rules:
+                    if DEBUG_MODE:
+                        logger.info(f"Removing {direction} rule {rule_id} from security group {group_id}")
+                    
+                    if direction == 'inbound':
+                        ec2_client.revoke_security_group_ingress(GroupId=group_id, SecurityGroupRuleIds=[rule_id])
+                    else:
+                        ec2_client.revoke_security_group_egress(GroupId=group_id, SecurityGroupRuleIds=[rule_id])
+                
+                if DEBUG_MODE:
+                    logger.info(f"Remediation complete for security group {group_id}")
+                
+                return {
+                    'ComplianceType': 'COMPLIANT',
+                    'Annotation': f"Remediated {group_id} by removing non-compliant rules."
+                }
+            else:
+                return {
+                    'ComplianceType': 'NON_COMPLIANT',
+                    'Annotation': annotation
+                }
         
-        # If no non-compliant rules are found, mark as compliant
+        if DEBUG_MODE:
+            logger.info(f"Security group {group_id} is COMPLIANT")
+        
         return {
             'ComplianceType': 'COMPLIANT',
-            'Annotation': f"Security group {group_id} does not have rules allowing traffic from/to 0.0.0.0/0."
+            'Annotation': f"{group_id} has no rules allowing 0.0.0.0/0."
         }
-    
+
     except ec2_client.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == 'InvalidGroup.NotFound':
-            if DEBUG_MODE:
-                logger.info("Security group %s does not exist, skipping evaluation", group_id)
-            return None  # Skip evaluation for non-existent security groups
-        logger.error("Error evaluating security group %s: %s", group_id, str(e))
+        if DEBUG_MODE:
+            logger.error(f"AWS ClientError evaluating {group_id}: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
+        logger.error(f"Error evaluating {group_id}: {str(e)}")
         return {
             'ComplianceType': 'INSUFFICIENT_DATA',
             'Annotation': f"Error: {str(e)[:200]}"
         }
     except Exception as e:
-        logger.error("Unexpected error evaluating security group %s: %s", group_id, str(e))
+        if DEBUG_MODE:
+            logger.error(f"Unexpected error evaluating {group_id}: {str(e)}")
         return {
             'ComplianceType': 'INSUFFICIENT_DATA',
             'Annotation': f"Unexpected error: {str(e)[:200]}"
