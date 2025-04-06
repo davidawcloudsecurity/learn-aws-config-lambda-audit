@@ -21,10 +21,10 @@ def lambda_handler(event, context):
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
     DEBUG_MODE_str = rule_parameters.get('debug_mode', 'False')
     DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
+
         
     if DEBUG_MODE:
-        logger.info("Debug mode is %s", DEBUG_MODE)
-        logger.info("Remediate is %s", remediate)
+        logger.info("Debug mode is %s", DEBUG_MODE)        
         logger.info(f"Lambda invoked at {datetime.now().isoformat()}")
         logger.info(f"Event: {json.dumps(event)}")
         logger.info(f"Context: {context.function_name}, {context.aws_request_id}")
@@ -41,6 +41,7 @@ def lambda_handler(event, context):
     is_scheduled = invoking_event.get('messageType') == 'ScheduledNotification'
 
     if DEBUG_MODE:
+        logger.info("Remediate is %s", remediate)
         logger.info(f"Remediation enabled: {remediate}")
         logger.info(f"Is scheduled event: {is_scheduled}")
 
