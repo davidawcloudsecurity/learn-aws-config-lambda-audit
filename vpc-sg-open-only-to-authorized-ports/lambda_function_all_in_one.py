@@ -14,15 +14,17 @@ def lambda_handler(event, context):
     """
     AWS Lambda function to evaluate and optionally remediate security groups.
     Works with AWS Config to report compliance.
-    Test with remediate=True in a safe environment to confirm rules are removed.
-    Test with remediate=False to verify evaluation without changes.
-    Test with debug_mode=False to share less
+    Test with remediate=true in a safe environment to confirm rules are removed.
+    Test with remediate=false to verify evaluation without changes.
     """
     global DEBUG_MODE
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
-    DEBUG_MODE = rule_parameters.get('debug_mode', False)
-    logger.info("Debug mode is %s", DEBUG_MODE)    
+    DEBUG_MODE_str = rule_parameters.get('debug_mode', 'False')
+    DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
+        
     if DEBUG_MODE:
+        logger.info("Debug mode is %s", DEBUG_MODE)
+        logger.info("Remediate is %s", remediate)
         logger.info(f"Lambda invoked at {datetime.now().isoformat()}")
         logger.info(f"Event: {json.dumps(event)}")
         logger.info(f"Context: {context.function_name}, {context.aws_request_id}")
@@ -35,7 +37,7 @@ def lambda_handler(event, context):
     invoking_event = json.loads(event['invokingEvent'])
     remediate_str = rule_parameters.get('remediate', 'False')
     remediate = remediate_str.lower() == 'true'
-    logger.info("Remediate is %s", remediate)    
+        
     is_scheduled = invoking_event.get('messageType') == 'ScheduledNotification'
 
     if DEBUG_MODE:
@@ -151,7 +153,10 @@ def evaluate_and_remediate(ec2_client, group_id, remediate):
                                f"Protocol: {protocol}, Ports: {from_port}-{to_port}")
 
         if non_compliant_rules:
-            annotation = f"Non-compliant rules found in {group_id}: {len(non_compliant_rules)} rules"
+            annotation = f"Security group {group_id} has non-compliant rules: "
+            for direction, rule_id in non_compliant_rules:
+                annotation += f"{direction} rule {rule_id}, "
+            annotation = annotation.rstrip(', ')  # Remove trailing comma and space         
             if DEBUG_MODE:
                 logger.info(f"Security group {group_id} is NON_COMPLIANT with {len(non_compliant_rules)} open rules")
             
