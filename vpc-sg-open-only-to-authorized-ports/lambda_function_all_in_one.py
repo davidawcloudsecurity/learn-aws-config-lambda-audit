@@ -130,7 +130,6 @@ def evaluate_and_remediate(ec2_client, group_id, remediate):
     try:
         if DEBUG_MODE:
             logger.info(f"Evaluating rules for security group: {group_id}")
-            logger.info(f"Remediate: {remediate}")
         
         response = ec2_client.describe_security_group_rules(
             Filters=[{'Name': 'group-id', 'Values': [group_id]}]
