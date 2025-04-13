@@ -21,7 +21,6 @@ def lambda_handler(event, context):
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
     DEBUG_MODE_str = rule_parameters.get('debug_mode', str(DEBUG_MODE))
     DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
-
         
     if DEBUG_MODE:
         logger.info("Debug mode is %s", DEBUG_MODE)        
