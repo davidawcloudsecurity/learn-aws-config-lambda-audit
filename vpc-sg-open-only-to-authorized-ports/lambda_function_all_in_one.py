@@ -19,7 +19,7 @@ def lambda_handler(event, context):
     """
     global DEBUG_MODE
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
-    DEBUG_MODE_str = rule_parameters.get('debug_mode', 'False')
+    DEBUG_MODE_str = rule_parameters.get('debug_mode', str(DEBUG_MODE))
     DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
 
         
