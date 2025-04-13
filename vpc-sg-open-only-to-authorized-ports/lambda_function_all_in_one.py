@@ -8,7 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Enable debug mode globally with default False
-DEBUG_MODE = false
+DEBUG_MODE = False
 
 def lambda_handler(event, context):
     """
