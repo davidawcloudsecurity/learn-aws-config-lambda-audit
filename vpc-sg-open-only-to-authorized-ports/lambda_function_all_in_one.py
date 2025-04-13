@@ -19,11 +19,12 @@ def lambda_handler(event, context):
     """
     global DEBUG_MODE
     rule_parameters = json.loads(event.get('ruleParameters', '{}'))
-    DEBUG_MODE_str = rule_parameters.get('debug_mode', str(DEBUG_MODE))
+    logger.info("Rule parameters: %s", rule_parameters)
+    DEBUG_MODE_str = rule_parameters.get('DEBUG_MODE', str(DEBUG_MODE))
     DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
-        
+  
     if DEBUG_MODE:
-        logger.info("Debug mode is %s", DEBUG_MODE)        
+        logger.info(json.dumps({"DEBUG_MODE": DEBUG_MODE}))  # Now this will show the updated value        
         logger.info(f"Lambda invoked at {datetime.now().isoformat()}")
         logger.info(f"Event: {json.dumps(event)}")
         logger.info(f"Context: {context.function_name}, {context.aws_request_id}")
