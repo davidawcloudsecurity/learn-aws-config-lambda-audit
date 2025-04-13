@@ -8,7 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Enable debug mode
-DEBUG_MODE = True
+DEBUG_MODE = False
 
 def lambda_handler(event, context):
     """
@@ -22,6 +22,11 @@ def lambda_handler(event, context):
     Returns:
     - dict: Evaluation results are sent directly to AWS Config
     """
+    global DEBUG_MODE
+    rule_parameters = json.loads(event.get('ruleParameters', '{}'))
+    DEBUG_MODE_str = rule_parameters.get('debug_mode', 'False')
+    DEBUG_MODE = DEBUG_MODE_str.lower() == 'true'
+    
     if DEBUG_MODE:
         logger.info("Received event: %s", json.dumps(event))
     
