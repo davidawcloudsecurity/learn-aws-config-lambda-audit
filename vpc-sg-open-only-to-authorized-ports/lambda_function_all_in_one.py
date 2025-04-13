@@ -8,7 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Enable debug mode globally with default False
-DEBUG_MODE = False
+DEBUG_MODE = false
 
 def lambda_handler(event, context):
     """
@@ -35,13 +35,13 @@ def lambda_handler(event, context):
 
     # Parse event data
     invoking_event = json.loads(event['invokingEvent'])
-    remediate_str = rule_parameters.get('remediate', 'False')
+    remediate_str = rule_parameters.get('remediate', 'false')
     remediate = remediate_str.lower() == 'true'
         
     is_scheduled = invoking_event.get('messageType') == 'ScheduledNotification'
 
     if DEBUG_MODE:
-        logger.info("Remediate is %s", remediate)
+        logger.info(json.dumps({"remediate": remediate}))  # Now this will show the updated value              
         logger.info(f"Remediation enabled: {remediate}")
         logger.info(f"Is scheduled event: {is_scheduled}")
 
